@@ -6,19 +6,20 @@ pkgdesc='Minimal Linux tray indicator for Razer wireless mouse battery level'
 arch=('x86_64')
 url=''
 license=('MIT')
-depends=('gcc-libs' 'dbus')
-optdepends=('openrazer-driver-dkms: kernel module exposing battery sysfs files')
+depends=('gcc-libs' 'dbus' 'openrazer-driver-dkms')
 makedepends=('cargo')
 install="$pkgname.install"
 source=()
 
+_projectdir="$startdir/.."
+
 prepare() {
-    cd "$startdir"
+    cd "$_projectdir"
     cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {
-    cd "$startdir"
+    cd "$_projectdir"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR="$srcdir/target"
     cargo build --frozen --release
@@ -27,12 +28,12 @@ build() {
 package() {
     install -Dm755 "$srcdir/target/release/$pkgname" \
         "$pkgdir/usr/bin/$pkgname"
-    install -Dm644 "$startdir/arch/$pkgname.service" \
+    install -Dm644 "$startdir/$pkgname.service" \
         "$pkgdir/usr/lib/systemd/user/$pkgname.service"
-    install -Dm644 "$startdir/arch/$pkgname.desktop" \
+    install -Dm644 "$startdir/$pkgname.desktop" \
         "$pkgdir/etc/xdg/autostart/$pkgname.desktop"
-    install -Dm644 "$startdir/LICENSE" \
+    install -Dm644 "$_projectdir/LICENSE" \
         "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-    install -Dm644 "$startdir/README.md" \
+    install -Dm644 "$_projectdir/README.md" \
         "$pkgdir/usr/share/doc/$pkgname/README.md"
 }
