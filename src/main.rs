@@ -2,6 +2,7 @@ use glob::glob;
 use ksni::{self, MenuItem, Tray, TrayService};
 use notify_rust::{Notification, Urgency};
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -9,6 +10,28 @@ use std::time::Duration;
 const SYSFS_PATTERN: &str = "/sys/bus/hid/drivers/razermouse/*/{}";
 const POLL_INTERVAL_SECS: u64 = 60;
 const LOW_BATTERY_THRESHOLD: u8 = 20;
+
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+macro_rules! log_info {
+    ($($arg:tt)*) => {
+        if VERBOSE.load(Ordering::Relaxed) {
+            println!("[razer-tray] {}", format_args!($($arg)*));
+        }
+    };
+}
+
+const HELP_TEXT: &str = "\
+razer-tray - tray indicator for Razer wireless mouse battery
+
+USAGE:
+    razer-tray [OPTIONS]
+
+OPTIONS:
+    -h, --help       Print this help message and exit
+    -V, --version    Print version and exit
+    -v, --verbose    Print info logs to stdout
+";
 
 #[derive(Clone)]
 struct BatteryState {
@@ -101,16 +124,55 @@ fn read_battery() -> (Option<u8>, bool) {
 }
 
 fn notify_low_battery(level: u8) {
-    let _ = Notification::new()
+    log_info!("notification: low battery {}%", level);
+    if let Err(e) = Notification::new()
         .summary("Razer Mouse — Low Battery")
         .body(&format!("Battery level: {}%", level))
         .icon("battery-caution")
         .urgency(Urgency::Critical)
         .timeout(10000)
-        .show();
+        .show()
+    {
+        eprintln!("[razer-tray] failed to show notification: {}", e);
+    }
+}
+
+fn parse_args() -> Result<(), i32> {
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "-h" | "--help" => {
+                print!("{}", HELP_TEXT);
+                return Err(0);
+            }
+            "-V" | "--version" => {
+                println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+                return Err(0);
+            }
+            "-v" | "--verbose" => {
+                VERBOSE.store(true, Ordering::Relaxed);
+            }
+            other => {
+                eprintln!("razer-tray: unknown argument '{}'", other);
+                eprintln!();
+                eprint!("{}", HELP_TEXT);
+                return Err(2);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn main() {
+    if let Err(code) = parse_args() {
+        std::process::exit(code);
+    }
+
+    log_info!(
+        "starting {} {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    );
+
     let state = Arc::new(Mutex::new(BatteryState {
         level: None,
         charging: false,
@@ -118,6 +180,7 @@ fn main() {
     }));
 
     let (level, charging) = read_battery();
+    log_info!("initial battery: level={:?} charging={}", level, charging);
     {
         let mut s = state.lock().unwrap();
         s.level = level;
@@ -132,11 +195,11 @@ fn main() {
     let handle = service.handle();
     service.spawn();
 
-    // Poll loop
     loop {
         thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
 
         let (level, charging) = read_battery();
+        log_info!("poll: level={:?} charging={}", level, charging);
         let mut s = state.lock().unwrap();
         s.level = level;
         s.charging = charging;
