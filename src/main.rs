@@ -29,7 +29,7 @@ impl Tray for RazerTray {
             (Some(_), true) => "battery-full-charging".into(),
             (Some(l), false) if l > 80 => "battery-full".into(),
             (Some(l), false) if l > 60 => "battery-good".into(),
-            (Some(l), false) if l > 40 => "battery-good".into(),
+            (Some(l), false) if l > 40 => "battery-medium".into(),
             (Some(l), false) if l > 20 => "battery-low".into(),
             (Some(_), false) => "battery-caution".into(),
         }
