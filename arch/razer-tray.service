@@ -1,0 +1,14 @@
+[Unit]
+Description=Razer Mouse Battery Tray Indicator
+Documentation=https://github.com/openrazer/openrazer
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/razer-tray
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

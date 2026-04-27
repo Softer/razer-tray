@@ -1,0 +1,38 @@
+# Maintainer: razer-tray contributors
+pkgname=razer-tray
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Minimal Linux tray indicator for Razer wireless mouse battery level'
+arch=('x86_64')
+url=''
+license=('MIT')
+depends=('gcc-libs' 'dbus')
+optdepends=('openrazer-driver-dkms: kernel module exposing battery sysfs files')
+makedepends=('cargo')
+install="$pkgname.install"
+source=()
+
+prepare() {
+    cd "$startdir"
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "$startdir"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR="$srcdir/target"
+    cargo build --frozen --release
+}
+
+package() {
+    install -Dm755 "$srcdir/target/release/$pkgname" \
+        "$pkgdir/usr/bin/$pkgname"
+    install -Dm644 "$startdir/arch/$pkgname.service" \
+        "$pkgdir/usr/lib/systemd/user/$pkgname.service"
+    install -Dm644 "$startdir/arch/$pkgname.desktop" \
+        "$pkgdir/etc/xdg/autostart/$pkgname.desktop"
+    install -Dm644 "$startdir/LICENSE" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 "$startdir/README.md" \
+        "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
