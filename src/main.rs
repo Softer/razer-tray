@@ -1,12 +1,12 @@
 use glob::glob;
-use ksni::{self, Icon, MenuItem, Tray, TrayService};
+use ksni::{self, MenuItem, Tray, TrayService};
 use notify_rust::{Notification, Urgency};
 use std::fs;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-const SYSFS_PATTERN: &str = "/sys/bus/hid/drivers/razermouse/*/charge_level";
+const SYSFS_PATTERN: &str = "/sys/bus/hid/drivers/razermouse/*/{}";
 const POLL_INTERVAL_SECS: u64 = 60;
 const LOW_BATTERY_THRESHOLD: u8 = 20;
 
@@ -84,19 +84,16 @@ impl Tray for RazerTray {
 }
 
 fn read_sysfs(filename: &str) -> Option<String> {
-    for entry in glob(&format!("/sys/bus/hid/drivers/razermouse/*/{}", filename)).ok()? {
-        if let Ok(path) = entry {
-            if let Ok(content) = fs::read_to_string(&path) {
-                return Some(content.trim().to_string());
-            }
+    for path in glob(&SYSFS_PATTERN.replace("{}", filename)).ok()?.flatten() {
+        if let Ok(content) = fs::read_to_string(&path) {
+            return Some(content.trim().to_string());
         }
     }
     None
 }
 
 fn read_battery() -> (Option<u8>, bool) {
-    let level = read_sysfs("charge_level")
-        .and_then(|s| s.parse::<u8>().ok());
+    let level = read_sysfs("charge_level").and_then(|s| s.parse::<u8>().ok());
     let charging = read_sysfs("charge_status")
         .map(|s| s == "1")
         .unwrap_or(false);
