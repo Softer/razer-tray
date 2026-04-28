@@ -1,8 +1,8 @@
 [package]
 name = "razer-tray"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2021"
-description = "Minimal tray indicator for Razer mouse battery via kernel sysfs"
+description = "Minimal tray indicator for Razer wireless mouse and keyboard battery via kernel sysfs"
 
 [dependencies]
 ksni = "0.2"

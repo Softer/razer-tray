@@ -1,9 +1,11 @@
-# Wake razer-tray.service for active user sessions on Razer mouse hotplug.
-# Pairs with razer-tray --quit-on-disconnect: the service exits when the
-# mouse is unplugged, and this rule relaunches it when the mouse is back
+# Wake razer-tray.service for active user sessions on Razer device hotplug.
+# Pairs with razer-tray --quit-on-disconnect: the service exits when no
+# Razer devices remain, and this rule relaunches it when one is back
 # without polling sysfs in the meantime.
 #
 # Harmless when --quit-on-disconnect is not used: systemctl start on an
-# already-running unit is a no-op.
+# already-running unit is a no-op. razer* matches razermouse, razerkbd
+# and any future driver in the family - razer-tray itself filters out
+# devices without a charge_level.
 
-ACTION=="add", SUBSYSTEM=="hid", DRIVER=="razermouse", RUN+="/usr/lib/razer-tray/udev-trigger"
+ACTION=="add", SUBSYSTEM=="hid", DRIVER=="razer*", RUN+="/usr/lib/razer-tray/udev-trigger"

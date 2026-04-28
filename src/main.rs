@@ -8,16 +8,19 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
-const SYSFS_PATTERN: &str = "/sys/bus/hid/drivers/razermouse/*/{}";
+const SYSFS_DRIVERS: &[&str] = &["razermouse", "razerkbd"];
 const POLL_INTERVAL_SECS: u64 = 1;
 const LOW_BATTERY_THRESHOLD: u8 = 20;
 const SLEEP_DETECTION_MIN_DROP: u8 = 5;
 
-static VERBOSE: AtomicBool = AtomicBool::new(false);
-static QUIT_ON_DISCONNECT: AtomicBool = AtomicBool::new(false);
-
 const STARTUP_GRACE_RETRIES: u8 = 5;
 const STARTUP_GRACE_INTERVAL_SECS: u64 = 1;
+
+const STATE_FILENAME: &str = "selected_device";
+const DEFAULT_DEVICE_NAME: &str = "Razer Device";
+
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+static QUIT_ON_DISCONNECT: AtomicBool = AtomicBool::new(false);
 
 macro_rules! log_info {
     ($($arg:tt)*) => {
@@ -28,7 +31,7 @@ macro_rules! log_info {
 }
 
 const HELP_TEXT: &str = "\
-razer-tray - tray indicator for Razer wireless mouse battery
+razer-tray - tray indicator for Razer wireless device battery
 
 USAGE:
     razer-tray [OPTIONS]
@@ -37,54 +40,88 @@ OPTIONS:
     -h, --help                 Print this help message and exit
     -V, --version              Print version and exit
     -v, --verbose              Print info logs to stdout
-    -q, --quit-on-disconnect   Exit cleanly when the mouse disappears
-                               from sysfs. Combine with the udev rule
+    -q, --quit-on-disconnect   Exit cleanly when no Razer devices remain
+                               in sysfs. Combine with the udev rule
                                shipped in the package to relaunch on
                                hotplug instead of polling forever.
 ";
 
 #[derive(Clone)]
-struct BatteryState {
+struct DeviceState {
+    sysfs_id: String,
+    persistent_id: String,
+    driver: &'static str,
     level: Option<u8>,
     charging: bool,
+    name: Option<String>,
     low_notified: bool,
-    device_name: Option<String>,
+    last_raw_level: Option<u8>,
 }
 
-const DEFAULT_DEVICE_NAME: &str = "Razer Mouse";
+struct MultiState {
+    devices: Vec<DeviceState>,
+    selected_id: Option<String>,
+}
+
+struct DiscoveredDevice {
+    sysfs_id: String,
+    persistent_id: String,
+    driver: &'static str,
+}
 
 struct RazerTray {
-    state: Arc<Mutex<BatteryState>>,
+    state: Arc<Mutex<MultiState>>,
+}
+
+impl RazerTray {
+    fn selected(&self) -> Option<DeviceState> {
+        let s = self.state.lock().unwrap();
+        let id = s.selected_id.as_ref()?;
+        s.devices.iter().find(|d| &d.sysfs_id == id).cloned()
+    }
+}
+
+fn format_device_label(d: &DeviceState) -> String {
+    let name = d.name.as_deref().unwrap_or(DEFAULT_DEVICE_NAME);
+    match (d.level, d.charging) {
+        (None, _) => format!("{}: not found", name),
+        (Some(l), true) => format!("{}: {}% (charging)", name, l),
+        (Some(l), false) => format!("{}: {}%", name, l),
+    }
 }
 
 impl Tray for RazerTray {
     fn icon_name(&self) -> String {
-        let state = self.state.lock().unwrap();
+        let sel = self.selected();
         if let Some(icons) = get_icons() {
-            if state.level.is_some() || icons.missing.is_some() {
+            let lvl = sel.as_ref().and_then(|d| d.level);
+            if lvl.is_some() || icons.missing.is_some() {
                 return String::new();
             }
         }
-        match (state.level, state.charging) {
-            (None, _) => "battery-missing".into(),
-            (Some(_), true) => "battery-full-charging".into(),
-            (Some(l), false) if l > 80 => "battery-full".into(),
-            (Some(l), false) if l > 60 => "battery-good".into(),
-            (Some(l), false) if l > 40 => "battery-medium".into(),
-            (Some(l), false) if l > 20 => "battery-low".into(),
-            (Some(_), false) => "battery-caution".into(),
+        match sel {
+            None => "battery-missing".into(),
+            Some(d) => match (d.level, d.charging) {
+                (None, _) => "battery-missing".into(),
+                (Some(_), true) => "battery-full-charging".into(),
+                (Some(l), false) if l > 80 => "battery-full".into(),
+                (Some(l), false) if l > 60 => "battery-good".into(),
+                (Some(l), false) if l > 40 => "battery-medium".into(),
+                (Some(l), false) if l > 20 => "battery-low".into(),
+                (Some(_), false) => "battery-caution".into(),
+            },
         }
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        let state = self.state.lock().unwrap();
         let Some(icons) = get_icons() else {
             return vec![];
         };
-        let icon = match state.level {
-            Some(level) => {
+        let sel = self.selected();
+        let icon = match sel.as_ref().and_then(|d| d.level.map(|l| (l, d.charging))) {
+            Some((level, charging)) => {
                 let idx = (level as usize).min(100);
-                if state.charging {
+                if charging {
                     &icons.charging[idx]
                 } else {
                     &icons.discharging[idx]
@@ -103,40 +140,58 @@ impl Tray for RazerTray {
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
-        let state = self.state.lock().unwrap();
-        let name = state.device_name.as_deref().unwrap_or(DEFAULT_DEVICE_NAME);
-        let description = match (state.level, state.charging) {
-            (None, _) => format!("{}: not found", name),
-            (Some(l), true) => format!("{}: {}% (charging)", name, l),
-            (Some(l), false) => format!("{}: {}%", name, l),
+        let sel = self.selected();
+        let title = match sel {
+            None => "No Razer device".into(),
+            Some(d) => format_device_label(&d),
         };
         ksni::ToolTip {
-            title: description,
+            title,
             ..Default::default()
         }
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let state = self.state.lock().unwrap();
-        let name = state.device_name.as_deref().unwrap_or(DEFAULT_DEVICE_NAME);
-        let label = match (state.level, state.charging) {
-            (None, _) => format!("{}: not found", name),
-            (Some(l), true) => format!("{}: {}% (charging)", name, l),
-            (Some(l), false) => format!("{}: {}%", name, l),
-        };
-        vec![
-            MenuItem::Standard(ksni::menu::StandardItem {
-                label,
+        let s = self.state.lock().unwrap();
+        let mut items: Vec<MenuItem<Self>> = Vec::new();
+        if s.devices.is_empty() {
+            items.push(MenuItem::Standard(ksni::menu::StandardItem {
+                label: "No Razer devices".into(),
                 enabled: false,
                 ..Default::default()
-            }),
-            MenuItem::Separator,
-            MenuItem::Standard(ksni::menu::StandardItem {
-                label: "Quit".into(),
-                activate: Box::new(|_| std::process::exit(0)),
-                ..Default::default()
-            }),
-        ]
+            }));
+        } else {
+            let device_ids: Vec<String> = s.devices.iter().map(|d| d.sysfs_id.clone()).collect();
+            let selected_idx = s
+                .selected_id
+                .as_ref()
+                .and_then(|sel| s.devices.iter().position(|d| &d.sysfs_id == sel))
+                .unwrap_or(0);
+            let options: Vec<ksni::menu::RadioItem> = s
+                .devices
+                .iter()
+                .map(|d| ksni::menu::RadioItem {
+                    label: format_device_label(d),
+                    ..Default::default()
+                })
+                .collect();
+            items.push(MenuItem::RadioGroup(ksni::menu::RadioGroup {
+                selected: selected_idx,
+                select: Box::new(move |this: &mut RazerTray, idx: usize| {
+                    if let Some(id) = device_ids.get(idx) {
+                        on_menu_click(&this.state, id.clone());
+                    }
+                }),
+                options,
+            }));
+        }
+        items.push(MenuItem::Separator);
+        items.push(MenuItem::Standard(ksni::menu::StandardItem {
+            label: "Quit".into(),
+            activate: Box::new(|_| std::process::exit(0)),
+            ..Default::default()
+        }));
+        items
     }
 
     fn id(&self) -> String {
@@ -259,29 +314,122 @@ fn load_png(path: &Path) -> Result<ksni::Icon, String> {
     })
 }
 
-fn read_sysfs(filename: &str) -> Option<String> {
-    for path in glob(&SYSFS_PATTERN.replace("{}", filename)).ok()?.flatten() {
-        if let Ok(content) = fs::read_to_string(&path) {
-            return Some(content.trim().to_string());
-        }
-    }
-    None
+fn read_device_sysfs(driver: &str, sysfs_id: &str, filename: &str) -> Option<String> {
+    let path = format!("/sys/bus/hid/drivers/{}/{}/{}", driver, sysfs_id, filename);
+    fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
 }
 
-fn read_battery() -> (Option<u8>, bool) {
-    let level = read_sysfs("charge_level").and_then(|s| s.parse::<u8>().ok());
-    let charging = read_sysfs("charge_status")
+fn read_battery_for(driver: &str, sysfs_id: &str) -> (Option<u8>, bool) {
+    let level =
+        read_device_sysfs(driver, sysfs_id, "charge_level").and_then(|s| s.parse::<u8>().ok());
+    let charging = read_device_sysfs(driver, sysfs_id, "charge_status")
         .map(|s| !s.is_empty() && s != "0")
         .unwrap_or(false);
     (level, charging)
 }
 
-fn read_device_name() -> Option<String> {
-    read_sysfs("device_type").filter(|s| !s.is_empty())
+fn read_device_name_for(driver: &str, sysfs_id: &str) -> Option<String> {
+    read_device_sysfs(driver, sysfs_id, "device_type").filter(|s| !s.is_empty())
+}
+
+fn extract_persistent_id(sysfs_id: &str) -> Option<String> {
+    let main = sysfs_id.split('.').next()?;
+    let parts: Vec<&str> = main.split(':').collect();
+    if parts.len() == 3 && !parts[1].is_empty() && !parts[2].is_empty() {
+        Some(format!("{}:{}", parts[1], parts[2]))
+    } else {
+        None
+    }
+}
+
+fn discover() -> Vec<DiscoveredDevice> {
+    let mut out = Vec::new();
+    for &drv in SYSFS_DRIVERS {
+        let pattern = format!("/sys/bus/hid/drivers/{}/*", drv);
+        let Ok(paths) = glob(&pattern) else { continue };
+        for path in paths.flatten() {
+            if !path.join("charge_level").exists() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Some(pid) = extract_persistent_id(name) else {
+                continue;
+            };
+            out.push(DiscoveredDevice {
+                sysfs_id: name.to_string(),
+                persistent_id: pid,
+                driver: drv,
+            });
+        }
+    }
+    out
+}
+
+fn state_file_path() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("razer-tray").join(STATE_FILENAME))
+}
+
+fn load_persisted_selection() -> Option<String> {
+    let path = state_file_path()?;
+    let content = fs::read_to_string(&path).ok()?;
+    let trimmed = content.trim();
+    let parts: Vec<&str> = trimmed.split(':').collect();
+    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+        Some(trimmed.to_string())
+    } else {
+        log_info!("persisted selection malformed: {:?}", trimmed);
+        None
+    }
+}
+
+fn save_persisted_selection(persistent_id: &str) {
+    let Some(path) = state_file_path() else {
+        log_info!("no XDG_CONFIG_HOME or HOME, persistence disabled");
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            log_info!("failed to create state dir {}: {}", parent.display(), e);
+            return;
+        }
+    }
+    if let Err(e) = fs::write(&path, persistent_id) {
+        log_info!(
+            "failed to write persisted selection {}: {}",
+            path.display(),
+            e
+        );
+    }
+}
+
+fn on_menu_click(state: &Arc<Mutex<MultiState>>, sysfs_id: String) {
+    let new_pid = {
+        let mut s = state.lock().unwrap();
+        if s.selected_id.as_ref() == Some(&sysfs_id) {
+            return;
+        }
+        let pid = match s.devices.iter().find(|d| d.sysfs_id == sysfs_id) {
+            Some(d) => d.persistent_id.clone(),
+            None => {
+                log_info!("ignoring stale menu click for {}", sysfs_id);
+                return;
+            }
+        };
+        s.selected_id = Some(sysfs_id);
+        pid
+    };
+    log_info!("user selected device, persisting {}", new_pid);
+    save_persisted_selection(&new_pid);
 }
 
 fn notify_low_battery(level: u8, device_name: &str) {
-    log_info!("notification: low battery {}%", level);
+    log_info!("notification: low battery {}% on {}", level, device_name);
     if let Err(e) = Notification::new()
         .summary(&format!("{}: Low Battery", device_name))
         .body(&format!("Battery level: {}%", level))
@@ -333,45 +481,93 @@ fn main() {
         env!("CARGO_PKG_VERSION")
     );
 
-    let state = Arc::new(Mutex::new(BatteryState {
-        level: None,
-        charging: false,
-        low_notified: false,
-        device_name: None,
-    }));
-
     let quit_on_disconnect = QUIT_ON_DISCONNECT.load(Ordering::Relaxed);
-    let mut initial = read_battery();
-    let mut device_name = read_device_name();
-    if quit_on_disconnect && initial.0.is_none() {
+    let mut discovered = discover();
+    if quit_on_disconnect && discovered.is_empty() {
         for _ in 0..STARTUP_GRACE_RETRIES {
             thread::sleep(Duration::from_secs(STARTUP_GRACE_INTERVAL_SECS));
-            initial = read_battery();
-            if initial.0.is_some() {
-                device_name = read_device_name();
+            discovered = discover();
+            if !discovered.is_empty() {
                 break;
             }
         }
-        if initial.0.is_none() {
-            eprintln!("[razer-tray] device not present at startup, exiting (--quit-on-disconnect)");
+        if discovered.is_empty() {
+            eprintln!(
+                "[razer-tray] no Razer devices present at startup, exiting (--quit-on-disconnect)"
+            );
             std::process::exit(0);
         }
     }
-    let (level, charging) = initial;
-    log_info!(
-        "initial: level={:?} charging={} device={:?}",
-        level,
-        charging,
-        device_name
-    );
-    let mut device_name_resolved = device_name.is_some();
-    let mut last_raw_level: Option<u8> = level;
-    {
-        let mut s = state.lock().unwrap();
-        s.level = level;
-        s.charging = charging;
-        s.device_name = device_name;
+    log_info!("discovered {} device(s) at startup", discovered.len());
+
+    let devices: Vec<DeviceState> = discovered
+        .into_iter()
+        .map(|d| {
+            let driver = d.driver;
+            let (level, charging) = read_battery_for(driver, &d.sysfs_id);
+            let name = read_device_name_for(driver, &d.sysfs_id);
+            log_info!(
+                "  {} ({}): level={:?} charging={} name={:?}",
+                d.sysfs_id,
+                driver,
+                level,
+                charging,
+                name
+            );
+            DeviceState {
+                sysfs_id: d.sysfs_id,
+                persistent_id: d.persistent_id,
+                driver,
+                level,
+                charging,
+                name,
+                low_notified: false,
+                last_raw_level: level,
+            }
+        })
+        .collect();
+
+    let persisted = load_persisted_selection();
+    if let Some(p) = persisted.as_ref() {
+        log_info!("loaded persisted selection: {}", p);
     }
+    let selected_id = persisted
+        .as_ref()
+        .and_then(|pid| {
+            devices
+                .iter()
+                .find(|d| &d.persistent_id == pid)
+                .map(|d| d.sysfs_id.clone())
+        })
+        .or_else(|| devices.first().map(|d| d.sysfs_id.clone()));
+    if persisted.is_some() && selected_id.as_ref().is_some() {
+        let matched_pid = selected_id
+            .as_ref()
+            .and_then(|sid| devices.iter().find(|d| &d.sysfs_id == sid))
+            .map(|d| &d.persistent_id);
+        if matched_pid != persisted.as_ref() {
+            log_info!(
+                "persisted selection {:?} not present, using first discovered",
+                persisted
+            );
+        }
+    }
+    if let Some(id) = &selected_id {
+        log_info!("initial selection: {}", id);
+    }
+
+    if quit_on_disconnect && devices.is_empty() {
+        eprintln!(
+            "[razer-tray] no Razer devices with battery present, exiting (--quit-on-disconnect)"
+        );
+        std::process::exit(0);
+    }
+
+    let mut last_selected = selected_id.clone();
+    let state = Arc::new(Mutex::new(MultiState {
+        devices,
+        selected_id,
+    }));
 
     let tray = RazerTray {
         state: state.clone(),
@@ -389,96 +585,142 @@ fn main() {
     loop {
         thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
 
-        let (raw_level, charging) = read_battery();
-        let new_name = if device_name_resolved {
-            None
-        } else {
-            let n = read_device_name();
-            if n.is_some() {
-                device_name_resolved = true;
-            }
-            n
-        };
+        let discovered = discover();
 
-        if quit_on_disconnect && raw_level.is_none() {
-            log_info!("device disconnected, exiting (--quit-on-disconnect)");
+        if quit_on_disconnect && discovered.is_empty() {
+            log_info!("all devices disconnected, exiting (--quit-on-disconnect)");
             std::process::exit(0);
         }
 
         let mut s = state.lock().unwrap();
+        let mut changed = false;
 
-        let prev_level = s.level;
-        let prev_charging = s.charging;
-        let prev_name = s.device_name.clone();
-
-        let post_sleep_level = match (raw_level, prev_level) {
-            (Some(0), Some(prev)) if !charging && prev >= SLEEP_DETECTION_MIN_DROP => {
-                log_info!(
-                    "sleep detected (sysfs returned 0%, keeping previous {}%)",
-                    prev
-                );
-                Some(prev)
-            }
-            _ => raw_level,
-        };
-
-        let level = if post_sleep_level == prev_level
-            || prev_level.is_none()
-            || last_raw_level == post_sleep_level
-        {
-            post_sleep_level
-        } else {
-            log_info!(
-                "level change pending: raw={:?}, awaiting confirmation",
-                post_sleep_level
-            );
-            prev_level
-        };
-        last_raw_level = post_sleep_level;
-
-        s.level = level;
-        s.charging = charging;
-        if new_name.is_some() {
-            s.device_name = new_name;
+        let before = s.devices.len();
+        s.devices
+            .retain(|d| discovered.iter().any(|disc| disc.sysfs_id == d.sysfs_id));
+        if s.devices.len() != before {
+            log_info!("removed {} gone device(s)", before - s.devices.len());
+            changed = true;
         }
 
-        let pending_notify = match level {
-            Some(l) if l <= LOW_BATTERY_THRESHOLD && !charging && !s.low_notified => {
-                s.low_notified = true;
-                let name = s
-                    .device_name
-                    .clone()
-                    .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
-                Some((l, name))
+        for disc in &discovered {
+            if !s.devices.iter().any(|d| d.sysfs_id == disc.sysfs_id) {
+                let driver = disc.driver;
+                let sysfs_id = disc.sysfs_id.clone();
+                let (level, charging) = read_battery_for(driver, &sysfs_id);
+                let name = read_device_name_for(driver, &sysfs_id);
+                log_info!(
+                    "new device: {} ({}) level={:?} name={:?}",
+                    sysfs_id,
+                    driver,
+                    level,
+                    name
+                );
+                s.devices.push(DeviceState {
+                    sysfs_id,
+                    persistent_id: disc.persistent_id.clone(),
+                    driver,
+                    level,
+                    charging,
+                    name,
+                    low_notified: false,
+                    last_raw_level: level,
+                });
+                changed = true;
             }
-            Some(l) => {
-                if l > LOW_BATTERY_THRESHOLD {
-                    s.low_notified = false;
-                }
-                None
-            }
-            None => None,
-        };
+        }
 
-        let changed =
-            prev_level != s.level || prev_charging != s.charging || prev_name != s.device_name;
-        let log_level = s.level;
-        let log_charging = s.charging;
-        let log_name = s.device_name.clone();
+        let selected_present = s
+            .selected_id
+            .as_ref()
+            .map(|id| s.devices.iter().any(|d| &d.sysfs_id == id))
+            .unwrap_or(false);
+        if !selected_present {
+            let new_sel = s.devices.first().map(|d| d.sysfs_id.clone());
+            if s.selected_id != new_sel {
+                match &new_sel {
+                    Some(id) => log_info!("selected device gone, falling back to {}", id),
+                    None => log_info!("selected device gone, no devices remaining"),
+                }
+                s.selected_id = new_sel;
+                changed = true;
+            }
+        }
+
+        let mut pending_notifies: Vec<(u8, String)> = Vec::new();
+        for d in s.devices.iter_mut() {
+            let prev_level = d.level;
+            let prev_charging = d.charging;
+            let prev_name = d.name.clone();
+
+            let (raw_level, charging) = read_battery_for(d.driver, &d.sysfs_id);
+            if d.name.is_none() {
+                if let Some(n) = read_device_name_for(d.driver, &d.sysfs_id) {
+                    d.name = Some(n);
+                }
+            }
+
+            let post_sleep = match (raw_level, prev_level) {
+                (Some(0), Some(p)) if !charging && p >= SLEEP_DETECTION_MIN_DROP => {
+                    log_info!("{}: sleep detected, keeping {}%", d.sysfs_id, p);
+                    Some(p)
+                }
+                _ => raw_level,
+            };
+
+            let new_level = if post_sleep == prev_level
+                || prev_level.is_none()
+                || d.last_raw_level == post_sleep
+            {
+                post_sleep
+            } else {
+                log_info!(
+                    "{}: level change pending raw={:?}, awaiting confirmation",
+                    d.sysfs_id,
+                    post_sleep
+                );
+                prev_level
+            };
+            d.last_raw_level = post_sleep;
+            d.level = new_level;
+            d.charging = charging;
+
+            if let Some(l) = new_level {
+                if l <= LOW_BATTERY_THRESHOLD && !charging && !d.low_notified {
+                    d.low_notified = true;
+                    let name = d
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
+                    pending_notifies.push((l, name));
+                }
+                if l > LOW_BATTERY_THRESHOLD {
+                    d.low_notified = false;
+                }
+            }
+
+            if d.level != prev_level || d.charging != prev_charging || d.name != prev_name {
+                changed = true;
+            }
+        }
+
+        if s.selected_id != last_selected {
+            log_info!(
+                "selection changed: {:?} -> {:?}",
+                last_selected,
+                s.selected_id
+            );
+            last_selected = s.selected_id.clone();
+            changed = true;
+        }
 
         drop(s);
 
-        if let Some((l, name)) = pending_notify {
+        for (l, name) in pending_notifies {
             notify_low_battery(l, &name);
         }
 
         if changed {
-            log_info!(
-                "state change: level={:?} charging={} device={:?}",
-                log_level,
-                log_charging,
-                log_name
-            );
             handle.update(|_| {});
         }
     }
