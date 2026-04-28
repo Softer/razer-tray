@@ -28,6 +28,7 @@ jobs:
           pkgbuild: arch/aur/razer-tray/PKGBUILD
           assets: |
             arch/aur/razer-tray/razer-tray.install
+            arch/aur/razer-tray/.gitignore
           commit_username: Softer
           commit_email: softer@lin.in.ua
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
@@ -56,6 +57,7 @@ jobs:
           pkgbuild: arch/aur/razer-tray-bin/PKGBUILD
           assets: |
             arch/aur/razer-tray-bin/razer-tray.install
+            arch/aur/razer-tray-bin/.gitignore
           commit_username: Softer
           commit_email: softer@lin.in.ua
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
