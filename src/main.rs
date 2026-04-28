@@ -61,6 +61,7 @@ struct DeviceState {
 struct MultiState {
     devices: Vec<DeviceState>,
     selected_id: Option<String>,
+    preferred_pid: Option<String>,
 }
 
 struct DiscoveredDevice {
@@ -422,6 +423,7 @@ fn on_menu_click(state: &Arc<Mutex<MultiState>>, sysfs_id: String) {
             }
         };
         s.selected_id = Some(sysfs_id);
+        s.preferred_pid = Some(pid.clone());
         pid
     };
     log_info!("user selected device, persisting {}", new_pid);
@@ -560,6 +562,7 @@ fn main() {
     let state = Arc::new(Mutex::new(MultiState {
         devices,
         selected_id,
+        preferred_pid: persisted,
     }));
 
     let tray = RazerTray {
@@ -637,6 +640,27 @@ fn main() {
                 }
                 s.selected_id = new_sel;
                 changed = true;
+            }
+        }
+
+        if let Some(pref_pid) = s.preferred_pid.clone() {
+            let on_preferred = s
+                .selected_id
+                .as_ref()
+                .and_then(|sid| s.devices.iter().find(|d| &d.sysfs_id == sid))
+                .map(|d| d.persistent_id == pref_pid)
+                .unwrap_or(false);
+            if !on_preferred {
+                if let Some(target) = s
+                    .devices
+                    .iter()
+                    .find(|d| d.persistent_id == pref_pid)
+                    .map(|d| d.sysfs_id.clone())
+                {
+                    log_info!("preferred device {} present, restoring selection", pref_pid);
+                    s.selected_id = Some(target);
+                    changed = true;
+                }
             }
         }
 
