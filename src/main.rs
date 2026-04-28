@@ -14,6 +14,10 @@ const LOW_BATTERY_THRESHOLD: u8 = 20;
 const SLEEP_DETECTION_MIN_DROP: u8 = 5;
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
+static QUIT_ON_DISCONNECT: AtomicBool = AtomicBool::new(false);
+
+const STARTUP_GRACE_RETRIES: u8 = 5;
+const STARTUP_GRACE_INTERVAL_SECS: u64 = 1;
 
 macro_rules! log_info {
     ($($arg:tt)*) => {
@@ -30,9 +34,13 @@ USAGE:
     razer-tray [OPTIONS]
 
 OPTIONS:
-    -h, --help       Print this help message and exit
-    -V, --version    Print version and exit
-    -v, --verbose    Print info logs to stdout
+    -h, --help                 Print this help message and exit
+    -V, --version              Print version and exit
+    -v, --verbose              Print info logs to stdout
+    -q, --quit-on-disconnect   Exit cleanly when the mouse disappears
+                               from sysfs. Combine with the udev rule
+                               shipped in the package to relaunch on
+                               hotplug instead of polling forever.
 ";
 
 #[derive(Clone)]
@@ -290,6 +298,9 @@ fn parse_args() -> Result<(), i32> {
             "-v" | "--verbose" => {
                 VERBOSE.store(true, Ordering::Relaxed);
             }
+            "-q" | "--quit-on-disconnect" => {
+                QUIT_ON_DISCONNECT.store(true, Ordering::Relaxed);
+            }
             other => {
                 eprintln!("razer-tray: unknown argument '{}'", other);
                 eprintln!();
@@ -319,8 +330,24 @@ fn main() {
         device_name: None,
     }));
 
-    let (level, charging) = read_battery();
-    let device_name = read_device_name();
+    let quit_on_disconnect = QUIT_ON_DISCONNECT.load(Ordering::Relaxed);
+    let mut initial = read_battery();
+    let mut device_name = read_device_name();
+    if quit_on_disconnect && initial.0.is_none() {
+        for _ in 0..STARTUP_GRACE_RETRIES {
+            thread::sleep(Duration::from_secs(STARTUP_GRACE_INTERVAL_SECS));
+            initial = read_battery();
+            if initial.0.is_some() {
+                device_name = read_device_name();
+                break;
+            }
+        }
+        if initial.0.is_none() {
+            eprintln!("[razer-tray] device not present at startup, exiting (--quit-on-disconnect)");
+            std::process::exit(0);
+        }
+    }
+    let (level, charging) = initial;
     log_info!(
         "initial: level={:?} charging={} device={:?}",
         level,
@@ -347,6 +374,12 @@ fn main() {
 
         let (raw_level, charging) = read_battery();
         let new_name = read_device_name();
+
+        if quit_on_disconnect && raw_level.is_none() {
+            log_info!("device disconnected, exiting (--quit-on-disconnect)");
+            std::process::exit(0);
+        }
+
         let mut s = state.lock().unwrap();
 
         let level = match (raw_level, s.level) {

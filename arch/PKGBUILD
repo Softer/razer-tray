@@ -40,4 +40,9 @@ package() {
     install -d "$pkgdir/usr/share/$pkgname/icons"
     install -m644 "$_projectdir/icons/"*.png \
         "$pkgdir/usr/share/$pkgname/icons/"
+
+    install -Dm755 "$startdir/$pkgname-udev-trigger.sh" \
+        "$pkgdir/usr/lib/$pkgname/udev-trigger"
+    install -Dm644 "$startdir/99-$pkgname.rules" \
+        "$pkgdir/usr/lib/udev/rules.d/99-$pkgname.rules"
 }
