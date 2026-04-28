@@ -365,6 +365,7 @@ fn main() {
         device_name
     );
     let mut device_name_resolved = device_name.is_some();
+    let mut last_raw_level: Option<u8> = level;
     {
         let mut s = state.lock().unwrap();
         s.level = level;
@@ -410,7 +411,7 @@ fn main() {
         let prev_charging = s.charging;
         let prev_name = s.device_name.clone();
 
-        let level = match (raw_level, prev_level) {
+        let post_sleep_level = match (raw_level, prev_level) {
             (Some(0), Some(prev)) if !charging && prev >= SLEEP_DETECTION_MIN_DROP => {
                 log_info!(
                     "sleep detected (sysfs returned 0%, keeping previous {}%)",
@@ -420,6 +421,20 @@ fn main() {
             }
             _ => raw_level,
         };
+
+        let level = if post_sleep_level == prev_level
+            || prev_level.is_none()
+            || last_raw_level == post_sleep_level
+        {
+            post_sleep_level
+        } else {
+            log_info!(
+                "level change pending: raw={:?}, awaiting confirmation",
+                post_sleep_level
+            );
+            prev_level
+        };
+        last_raw_level = post_sleep_level;
 
         s.level = level;
         s.charging = charging;
