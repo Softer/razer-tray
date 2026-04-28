@@ -44,10 +44,26 @@ If no SNI host is present, the tray icon does not appear but the binary keeps po
 
 ## Installation
 
-### From a published release (Arch Linux, x86_64)
+### From the AUR (Arch Linux, recommended)
+
+Two packages are published:
+
+- [`razer-tray`](https://aur.archlinux.org/packages/razer-tray) - builds from source
+- [`razer-tray-bin`](https://aur.archlinux.org/packages/razer-tray-bin) - installs a prebuilt binary from the GitHub Release (no Rust compile)
+
+Pick one with your AUR helper:
 
 ```bash
-sudo pacman -U https://github.com/Softer/razer-tray/releases/latest/download/razer-tray-0.4.0-1-x86_64.pkg.tar.zst
+paru -S razer-tray       # or: yay -S razer-tray
+paru -S razer-tray-bin   # or: yay -S razer-tray-bin
+```
+
+Both install the systemd user service, the XDG autostart entry, and the udev rule. The two packages conflict with each other on purpose - install only one.
+
+### From a published release (manual)
+
+```bash
+sudo pacman -U https://github.com/Softer/razer-tray/releases/latest/download/razer-tray-0.4.1-1-x86_64.pkg.tar.zst
 ```
 
 Use the version you actually want, see the [release list](https://github.com/Softer/razer-tray/releases). The release workflow builds `.pkg.tar.zst` from source on every `vX.Y.Z` tag and attaches it to the GitHub Release. `pacman -U` installs the service, autostart, and udev rule in one go.
@@ -55,20 +71,20 @@ Use the version you actually want, see the [release list](https://github.com/Sof
 ### From source
 
 ```bash
-git clone <repo-url> razer-tray
+git clone https://github.com/Softer/razer-tray.git
 cd razer-tray
 cargo build --release
 sudo install -Dm755 target/release/razer-tray /usr/local/bin/razer-tray
 ```
 
-### Building the Arch Linux package
+### Building the Arch Linux package locally
 
 ```bash
 cd arch
 makepkg -si
 ```
 
-`makepkg -si` builds the package, installs it, and on top of that:
+`makepkg -si` builds the package from the in-tree PKGBUILD, installs it, and on top of that:
 - Enables the `razer-tray.service` systemd user unit globally (for all current and future users)
 - Drops an XDG autostart entry under `/etc/xdg/autostart/` (fallback for non-systemd sessions)
 - Tries to start the service for every logged-in user immediately after install
