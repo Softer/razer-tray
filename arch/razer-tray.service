@@ -1,5 +1,5 @@
 [Unit]
-Description=Razer Mouse Battery Tray Indicator
+Description=Razer Wireless Battery Tray Indicator
 Documentation=https://github.com/openrazer/openrazer
 After=graphical-session.target
 PartOf=graphical-session.target
