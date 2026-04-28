@@ -367,7 +367,12 @@ fn main() {
 
     let service = TrayService::new(tray);
     let handle = service.handle();
-    service.spawn();
+    thread::spawn(move || {
+        if let Err(e) = service.run() {
+            eprintln!("[razer-tray] tray registration failed: {}", e);
+            eprintln!("[razer-tray] continuing without tray icon (notifications still work)");
+        }
+    });
 
     loop {
         thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));

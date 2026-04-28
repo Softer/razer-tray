@@ -1,6 +1,6 @@
 # Maintainer: razer-tray contributors
 pkgname=razer-tray
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc='Minimal Linux tray indicator for Razer wireless mouse battery level'
 arch=('x86_64')
