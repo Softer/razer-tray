@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Razer Battery Tray
-GenericName=Mouse Battery Indicator
-Comment=Tray indicator for Razer wireless mouse battery
+GenericName=Wireless Device Battery Indicator
+Comment=Tray indicator for Razer wireless mouse and keyboard battery
 Exec=/usr/bin/razer-tray
-Icon=input-mouse
+Icon=battery
 Terminal=false
 Categories=System;HardwareSettings;
 X-GNOME-Autostart-enabled=true
