@@ -43,3 +43,34 @@ jobs:
 
       - name: smoke - --help exits 0
         run: ./target/release/razer-tray --help
+
+  aur-lint:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install lint tools
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed namcap
+
+      - uses: actions/checkout@v4
+
+      - name: Mark workspace safe for git (different uid in container)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Validate razer-tray (source) PKGBUILD
+        working-directory: arch/aur/razer-tray
+        run: |
+          bash -n PKGBUILD
+          namcap PKGBUILD
+          makepkg --printsrcinfo > .SRCINFO.expected
+          diff -u .SRCINFO .SRCINFO.expected
+
+      - name: Validate razer-tray-bin PKGBUILD
+        working-directory: arch/aur/razer-tray-bin
+        run: |
+          bash -n PKGBUILD
+          namcap PKGBUILD
+          makepkg --printsrcinfo > .SRCINFO.expected
+          diff -u .SRCINFO .SRCINFO.expected
