@@ -556,13 +556,6 @@ fn main() {
         log_info!("initial selection: {}", id);
     }
 
-    if quit_on_disconnect && devices.is_empty() {
-        eprintln!(
-            "[razer-tray] no Razer devices with battery present, exiting (--quit-on-disconnect)"
-        );
-        std::process::exit(0);
-    }
-
     let mut last_selected = selected_id.clone();
     let state = Arc::new(Mutex::new(MultiState {
         devices,
