@@ -60,8 +60,10 @@ struct RazerTray {
 impl Tray for RazerTray {
     fn icon_name(&self) -> String {
         let state = self.state.lock().unwrap();
-        if state.level.is_some() && get_icons().is_some() {
-            return String::new();
+        if let Some(icons) = get_icons() {
+            if state.level.is_some() || icons.missing.is_some() {
+                return String::new();
+            }
         }
         match (state.level, state.charging) {
             (None, _) => "battery-missing".into(),
@@ -76,17 +78,22 @@ impl Tray for RazerTray {
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         let state = self.state.lock().unwrap();
-        let Some(level) = state.level else {
-            return vec![];
-        };
         let Some(icons) = get_icons() else {
             return vec![];
         };
-        let idx = (level as usize).min(100);
-        let icon = if state.charging {
-            &icons.charging[idx]
-        } else {
-            &icons.discharging[idx]
+        let icon = match state.level {
+            Some(level) => {
+                let idx = (level as usize).min(100);
+                if state.charging {
+                    &icons.charging[idx]
+                } else {
+                    &icons.discharging[idx]
+                }
+            }
+            None => match icons.missing.as_ref() {
+                Some(m) => m,
+                None => return vec![],
+            },
         };
         vec![icon.clone()]
     }
@@ -144,6 +151,7 @@ impl Tray for RazerTray {
 struct IconSet {
     discharging: Vec<ksni::Icon>,
     charging: Vec<ksni::Icon>,
+    missing: Option<ksni::Icon>,
 }
 
 static ICON_SET: OnceLock<Option<IconSet>> = OnceLock::new();
@@ -211,9 +219,11 @@ fn load_icon_set(dir: &Path) -> Result<IconSet, String> {
         discharging.push(load_png(&dir.join(format!("bat_{}.png", level)))?);
         charging.push(load_png(&dir.join(format!("bat_{}_c.png", level)))?);
     }
+    let missing = load_png(&dir.join("bat_missing.png")).ok();
     Ok(IconSet {
         discharging,
         charging,
+        missing,
     })
 }
 

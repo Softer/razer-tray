@@ -37,6 +37,34 @@ def arc_color(level: int) -> tuple:
     return (230, 50, 50, 245)
 
 
+def render_missing_icon() -> Image.Image:
+    canvas = Image.new("RGBA", (RENDER_SIZE, RENDER_SIZE), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    border = int(RENDER_SIZE * BORDER_FRAC)
+    last = RENDER_SIZE - 1
+
+    draw.ellipse(
+        (0, 0, last, last),
+        fill=BACKGROUND_FILL,
+        outline=OUTLINE,
+        width=border,
+    )
+
+    font_size = int(RENDER_SIZE * FONT_FRAC_NORMAL)
+    font = ImageFont.truetype(FONT_PATH, font_size)
+    text = "?"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    pos = (
+        (RENDER_SIZE - text_w) / 2 - bbox[0],
+        (RENDER_SIZE - text_h) / 2 - bbox[1] - int(0.04 * RENDER_SIZE),
+    )
+    draw.text(pos, text, font=font, fill=(190, 190, 190, 230))
+
+    return canvas.resize((FINAL_SIZE, FINAL_SIZE), Image.Resampling.LANCZOS)
+
+
 def render_icon(level: int, charging: bool) -> Image.Image:
     canvas = Image.new("RGBA", (RENDER_SIZE, RENDER_SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
@@ -89,6 +117,8 @@ def main() -> None:
             path = OUTPUT_DIR / f"bat_{level}{suffix}.png"
             render_icon(level, charging).save(path, optimize=True)
             count += 1
+    render_missing_icon().save(OUTPUT_DIR / "bat_missing.png", optimize=True)
+    count += 1
     print(f"Generated {count} icons in {OUTPUT_DIR}")
 
 
