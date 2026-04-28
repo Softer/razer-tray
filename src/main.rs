@@ -1,6 +1,10 @@
 use glob::glob;
 use ksni::{self, MenuItem, Tray, TrayService};
 use notify_rust::{Notification, Urgency};
+use razer_tray::{
+    apply_debounce, apply_sleep_detection, extract_persistent_id, format_device_label,
+    parse_persisted_selection, DEFAULT_DEVICE_NAME,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,13 +15,11 @@ use std::time::Duration;
 const SYSFS_DRIVERS: &[&str] = &["razermouse", "razerkbd"];
 const POLL_INTERVAL_SECS: u64 = 1;
 const LOW_BATTERY_THRESHOLD: u8 = 20;
-const SLEEP_DETECTION_MIN_DROP: u8 = 5;
 
 const STARTUP_GRACE_RETRIES: u8 = 5;
 const STARTUP_GRACE_INTERVAL_SECS: u64 = 1;
 
 const STATE_FILENAME: &str = "selected_device";
-const DEFAULT_DEVICE_NAME: &str = "Razer Device";
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 static QUIT_ON_DISCONNECT: AtomicBool = AtomicBool::new(false);
@@ -82,15 +84,6 @@ impl RazerTray {
     }
 }
 
-fn format_device_label(d: &DeviceState) -> String {
-    let name = d.name.as_deref().unwrap_or(DEFAULT_DEVICE_NAME);
-    match (d.level, d.charging) {
-        (None, _) => format!("{}: not found", name),
-        (Some(l), true) => format!("{}: {}% (charging)", name, l),
-        (Some(l), false) => format!("{}: {}%", name, l),
-    }
-}
-
 impl Tray for RazerTray {
     fn icon_name(&self) -> String {
         let sel = self.selected();
@@ -144,7 +137,7 @@ impl Tray for RazerTray {
         let sel = self.selected();
         let title = match sel {
             None => "No Razer device".into(),
-            Some(d) => format_device_label(&d),
+            Some(d) => format_device_label(d.name.as_deref(), d.level, d.charging),
         };
         ksni::ToolTip {
             title,
@@ -172,7 +165,7 @@ impl Tray for RazerTray {
                 .devices
                 .iter()
                 .map(|d| ksni::menu::RadioItem {
-                    label: format_device_label(d),
+                    label: format_device_label(d.name.as_deref(), d.level, d.charging),
                     ..Default::default()
                 })
                 .collect();
@@ -333,16 +326,6 @@ fn read_device_name_for(driver: &str, sysfs_id: &str) -> Option<String> {
     read_device_sysfs(driver, sysfs_id, "device_type").filter(|s| !s.is_empty())
 }
 
-fn extract_persistent_id(sysfs_id: &str) -> Option<String> {
-    let main = sysfs_id.split('.').next()?;
-    let parts: Vec<&str> = main.split(':').collect();
-    if parts.len() == 3 && !parts[1].is_empty() && !parts[2].is_empty() {
-        Some(format!("{}:{}", parts[1], parts[2]))
-    } else {
-        None
-    }
-}
-
 fn discover() -> Vec<DiscoveredDevice> {
     let mut out = Vec::new();
     for &drv in SYSFS_DRIVERS {
@@ -379,13 +362,12 @@ fn state_file_path() -> Option<PathBuf> {
 fn load_persisted_selection() -> Option<String> {
     let path = state_file_path()?;
     let content = fs::read_to_string(&path).ok()?;
-    let trimmed = content.trim();
-    let parts: Vec<&str> = trimmed.split(':').collect();
-    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
-        Some(trimmed.to_string())
-    } else {
-        log_info!("persisted selection malformed: {:?}", trimmed);
-        None
+    match parse_persisted_selection(&content) {
+        Some(pid) => Some(pid),
+        None => {
+            log_info!("persisted selection malformed: {:?}", content.trim());
+            None
+        }
     }
 }
 
@@ -677,27 +659,19 @@ fn main() {
                 }
             }
 
-            let post_sleep = match (raw_level, prev_level) {
-                (Some(0), Some(p)) if !charging && p >= SLEEP_DETECTION_MIN_DROP => {
-                    log_info!("{}: sleep detected, keeping {}%", d.sysfs_id, p);
-                    Some(p)
-                }
-                _ => raw_level,
-            };
+            let post_sleep = apply_sleep_detection(raw_level, prev_level, charging);
+            if raw_level == Some(0) && post_sleep != Some(0) {
+                log_info!("{}: sleep detected, keeping {:?}", d.sysfs_id, post_sleep);
+            }
 
-            let new_level = if post_sleep == prev_level
-                || prev_level.is_none()
-                || d.last_raw_level == post_sleep
-            {
-                post_sleep
-            } else {
+            let new_level = apply_debounce(post_sleep, prev_level, d.last_raw_level);
+            if new_level != post_sleep {
                 log_info!(
                     "{}: level change pending raw={:?}, awaiting confirmation",
                     d.sysfs_id,
                     post_sleep
                 );
-                prev_level
-            };
+            }
             d.last_raw_level = post_sleep;
             d.level = new_level;
             d.charging = charging;
