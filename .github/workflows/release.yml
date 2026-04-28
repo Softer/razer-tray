@@ -51,12 +51,28 @@ jobs:
         # machine enforces the runtime dep there.
         run: sudo -u builder makepkg -f --nodeps
 
+      - name: Assemble binary tarball
+        run: |
+          pkgver="${GITHUB_REF_NAME#v}"
+          stage="razer-tray-$pkgver"
+          rm -rf "$stage"
+          mkdir -p "$stage/icons"
+          cp arch/pkg/razer-tray/usr/bin/razer-tray "$stage/"
+          cp arch/razer-tray.service                "$stage/"
+          cp arch/razer-tray.desktop                "$stage/"
+          cp arch/99-razer-tray.rules               "$stage/"
+          cp arch/razer-tray-udev-trigger.sh        "$stage/"
+          cp LICENSE README.md                      "$stage/"
+          cp icons/*.png                            "$stage/icons/"
+          tar czf "razer-tray-$pkgver-x86_64.tar.gz" "$stage"
+
       - name: Publish GitHub Release with package assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        working-directory: arch
         run: |
+          pkgver="${GITHUB_REF_NAME#v}"
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            razer-tray-*-x86_64.pkg.tar.zst
+            arch/razer-tray-*-x86_64.pkg.tar.zst \
+            "razer-tray-$pkgver-x86_64.tar.gz"
