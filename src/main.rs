@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 const SYSFS_PATTERN: &str = "/sys/bus/hid/drivers/razermouse/*/{}";
-const POLL_INTERVAL_SECS: u64 = 60;
+const POLL_INTERVAL_SECS: u64 = 1;
 const LOW_BATTERY_THRESHOLD: u8 = 20;
 const SLEEP_DETECTION_MIN_DROP: u8 = 5;
 
@@ -397,7 +397,11 @@ fn main() {
 
         let mut s = state.lock().unwrap();
 
-        let level = match (raw_level, s.level) {
+        let prev_level = s.level;
+        let prev_charging = s.charging;
+        let prev_name = s.device_name.clone();
+
+        let level = match (raw_level, prev_level) {
             (Some(0), Some(prev)) if !charging && prev >= SLEEP_DETECTION_MIN_DROP => {
                 log_info!(
                     "sleep detected (sysfs returned 0%, keeping previous {}%)",
@@ -407,13 +411,7 @@ fn main() {
             }
             _ => raw_level,
         };
-        log_info!(
-            "poll: level={:?} (raw={:?}) charging={} device={:?}",
-            level,
-            raw_level,
-            charging,
-            new_name
-        );
+
         s.level = level;
         s.charging = charging;
         if new_name.is_some() {
@@ -434,7 +432,22 @@ fn main() {
             }
         }
 
+        let changed =
+            prev_level != s.level || prev_charging != s.charging || prev_name != s.device_name;
+        let log_level = s.level;
+        let log_charging = s.charging;
+        let log_name = s.device_name.clone();
+
         drop(s);
-        handle.update(|_| {});
+
+        if changed {
+            log_info!(
+                "state change: level={:?} charging={} device={:?}",
+                log_level,
+                log_charging,
+                log_name
+            );
+            handle.update(|_| {});
+        }
     }
 }
