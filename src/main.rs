@@ -11,6 +11,7 @@ use std::time::Duration;
 const SYSFS_PATTERN: &str = "/sys/bus/hid/drivers/razermouse/*/{}";
 const POLL_INTERVAL_SECS: u64 = 60;
 const LOW_BATTERY_THRESHOLD: u8 = 20;
+const SLEEP_DETECTION_MIN_DROP: u8 = 5;
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 
@@ -344,15 +345,27 @@ fn main() {
     loop {
         thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
 
-        let (level, charging) = read_battery();
+        let (raw_level, charging) = read_battery();
         let new_name = read_device_name();
+        let mut s = state.lock().unwrap();
+
+        let level = match (raw_level, s.level) {
+            (Some(0), Some(prev)) if !charging && prev >= SLEEP_DETECTION_MIN_DROP => {
+                log_info!(
+                    "sleep detected (sysfs returned 0%, keeping previous {}%)",
+                    prev
+                );
+                Some(prev)
+            }
+            _ => raw_level,
+        };
         log_info!(
-            "poll: level={:?} charging={} device={:?}",
+            "poll: level={:?} (raw={:?}) charging={} device={:?}",
             level,
+            raw_level,
             charging,
             new_name
         );
-        let mut s = state.lock().unwrap();
         s.level = level;
         s.charging = charging;
         if new_name.is_some() {
