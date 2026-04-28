@@ -30,6 +30,18 @@ ls /sys/bus/hid/drivers/razermouse/ /sys/bus/hid/drivers/razerkbd/
 
 If both directories are empty the devices are either not connected or not supported by the openrazer driver.
 
+## Compatibility
+
+Verified on **MATE Desktop on X11**. Should work unchanged on any environment that exposes a StatusNotifierItem (SNI) host on the session D-Bus, on **both X11 and Wayland**:
+
+- **SNI host built in:** KDE Plasma, MATE, Cinnamon, LXQt, Deepin, Budgie, COSMIC
+- **One-time setup:** GNOME requires the [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) extension; XFCE older than 4.14 needs the `xfce4-statusnotifier-plugin`
+- **Tiling and standalone compositors:** Sway, Hyprland, i3, River, Wayfire, etc. - any panel that speaks SNI (`waybar` with the `tray` module, `polybar`, `i3status-rust`)
+
+Notifications go through the standard `org.freedesktop.Notifications` D-Bus interface and work with any modern notification daemon (`mako`, `dunst`, `swaync`, or the daemon shipped with each major DE).
+
+If no SNI host is present, the tray icon does not appear but the binary keeps polling and low-battery notifications still fire.
+
 ## Installation
 
 ### From a published release (Arch Linux, x86_64)
