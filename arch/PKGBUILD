@@ -36,4 +36,8 @@ package() {
         "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 "$_projectdir/README.md" \
         "$pkgdir/usr/share/doc/$pkgname/README.md"
+
+    install -d "$pkgdir/usr/share/$pkgname/icons"
+    install -m644 "$_projectdir/icons/"*.png \
+        "$pkgdir/usr/share/$pkgname/icons/"
 }

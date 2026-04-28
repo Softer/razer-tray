@@ -2,8 +2,9 @@ use glob::glob;
 use ksni::{self, MenuItem, Tray, TrayService};
 use notify_rust::{Notification, Urgency};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -47,6 +48,9 @@ struct RazerTray {
 impl Tray for RazerTray {
     fn icon_name(&self) -> String {
         let state = self.state.lock().unwrap();
+        if state.level.is_some() && get_icons().is_some() {
+            return String::new();
+        }
         match (state.level, state.charging) {
             (None, _) => "battery-missing".into(),
             (Some(_), true) => "battery-full-charging".into(),
@@ -56,6 +60,23 @@ impl Tray for RazerTray {
             (Some(l), false) if l > 20 => "battery-low".into(),
             (Some(_), false) => "battery-caution".into(),
         }
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        let state = self.state.lock().unwrap();
+        let Some(level) = state.level else {
+            return vec![];
+        };
+        let Some(icons) = get_icons() else {
+            return vec![];
+        };
+        let idx = (level as usize).min(100);
+        let icon = if state.charging {
+            &icons.charging[idx]
+        } else {
+            &icons.discharging[idx]
+        };
+        vec![icon.clone()]
     }
 
     fn title(&self) -> String {
@@ -104,6 +125,114 @@ impl Tray for RazerTray {
     fn category(&self) -> ksni::Category {
         ksni::Category::Hardware
     }
+}
+
+struct IconSet {
+    discharging: Vec<ksni::Icon>,
+    charging: Vec<ksni::Icon>,
+}
+
+static ICON_SET: OnceLock<Option<IconSet>> = OnceLock::new();
+
+fn get_icons() -> Option<&'static IconSet> {
+    ICON_SET
+        .get_or_init(|| {
+            let dir = find_icons_dir()?;
+            log_info!("loading icons from {}", dir.display());
+            match load_icon_set(&dir) {
+                Ok(set) => Some(set),
+                Err(e) => {
+                    eprintln!(
+                        "[razer-tray] failed to load icons from {}: {}",
+                        dir.display(),
+                        e
+                    );
+                    None
+                }
+            }
+        })
+        .as_ref()
+}
+
+fn find_icons_dir() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("RAZER_TRAY_ICONS_DIR") {
+        let path = PathBuf::from(p);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
+            let p = prefix.join("share/razer-tray/icons");
+            if p.is_dir() {
+                return Some(p);
+            }
+        }
+        if let Some(project) = exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
+            let p = project.join("icons");
+            if p.is_dir() {
+                return Some(p);
+            }
+        }
+    }
+    let p = PathBuf::from("/usr/share/razer-tray/icons");
+    if p.is_dir() {
+        return Some(p);
+    }
+    let p = PathBuf::from("./icons");
+    if p.is_dir() {
+        return Some(p);
+    }
+    None
+}
+
+fn load_icon_set(dir: &Path) -> Result<IconSet, String> {
+    let mut discharging = Vec::with_capacity(101);
+    let mut charging = Vec::with_capacity(101);
+    for level in 0..=100u8 {
+        discharging.push(load_png(&dir.join(format!("bat_{}.png", level)))?);
+        charging.push(load_png(&dir.join(format!("bat_{}_c.png", level)))?);
+    }
+    Ok(IconSet {
+        discharging,
+        charging,
+    })
+}
+
+fn load_png(path: &Path) -> Result<ksni::Icon, String> {
+    let file = fs::File::open(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("{}: {}", path.display(), e))?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("{}: {}", path.display(), e))?;
+
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return Err(format!(
+            "{}: expected 8-bit RGBA, got {:?} {:?}",
+            path.display(),
+            info.color_type,
+            info.bit_depth
+        ));
+    }
+
+    let mut argb = Vec::with_capacity(buf.len());
+    for px in buf.chunks_exact(4) {
+        argb.extend_from_slice(&[px[3], px[0], px[1], px[2]]);
+    }
+
+    Ok(ksni::Icon {
+        width: info.width as i32,
+        height: info.height as i32,
+        data: argb,
+    })
 }
 
 fn read_sysfs(filename: &str) -> Option<String> {
