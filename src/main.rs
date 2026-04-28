@@ -271,7 +271,7 @@ fn read_sysfs(filename: &str) -> Option<String> {
 fn read_battery() -> (Option<u8>, bool) {
     let level = read_sysfs("charge_level").and_then(|s| s.parse::<u8>().ok());
     let charging = read_sysfs("charge_status")
-        .map(|s| s == "1")
+        .map(|s| !s.is_empty() && s != "0")
         .unwrap_or(false);
     (level, charging)
 }
@@ -364,6 +364,7 @@ fn main() {
         charging,
         device_name
     );
+    let mut device_name_resolved = device_name.is_some();
     {
         let mut s = state.lock().unwrap();
         s.level = level;
@@ -388,7 +389,15 @@ fn main() {
         thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
 
         let (raw_level, charging) = read_battery();
-        let new_name = read_device_name();
+        let new_name = if device_name_resolved {
+            None
+        } else {
+            let n = read_device_name();
+            if n.is_some() {
+                device_name_resolved = true;
+            }
+            n
+        };
 
         if quit_on_disconnect && raw_level.is_none() {
             log_info!("device disconnected, exiting (--quit-on-disconnect)");
@@ -418,19 +427,23 @@ fn main() {
             s.device_name = new_name;
         }
 
-        if let Some(l) = level {
-            if l <= LOW_BATTERY_THRESHOLD && !charging && !s.low_notified {
+        let pending_notify = match level {
+            Some(l) if l <= LOW_BATTERY_THRESHOLD && !charging && !s.low_notified => {
+                s.low_notified = true;
                 let name = s
                     .device_name
                     .clone()
                     .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
-                notify_low_battery(l, &name);
-                s.low_notified = true;
+                Some((l, name))
             }
-            if l > LOW_BATTERY_THRESHOLD {
-                s.low_notified = false;
+            Some(l) => {
+                if l > LOW_BATTERY_THRESHOLD {
+                    s.low_notified = false;
+                }
+                None
             }
-        }
+            None => None,
+        };
 
         let changed =
             prev_level != s.level || prev_charging != s.charging || prev_name != s.device_name;
@@ -439,6 +452,10 @@ fn main() {
         let log_name = s.device_name.clone();
 
         drop(s);
+
+        if let Some((l, name)) = pending_notify {
+            notify_low_battery(l, &name);
+        }
 
         if changed {
             log_info!(
