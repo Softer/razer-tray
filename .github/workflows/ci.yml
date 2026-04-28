@@ -52,19 +52,24 @@ jobs:
       - name: Install lint tools
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed git namcap
+          pacman -S --noconfirm --needed git namcap sudo
 
       - uses: actions/checkout@v4
 
       - name: Mark workspace safe for git (different uid in container)
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Set up unprivileged user (makepkg refuses to run as root)
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
       - name: Validate razer-tray (source) PKGBUILD
         working-directory: arch/aur/razer-tray
         run: |
           bash -n PKGBUILD
           namcap PKGBUILD
-          makepkg --printsrcinfo > .SRCINFO.expected
+          sudo -u builder makepkg --printsrcinfo > .SRCINFO.expected
           diff -u .SRCINFO .SRCINFO.expected
 
       - name: Validate razer-tray-bin PKGBUILD
@@ -72,5 +77,5 @@ jobs:
         run: |
           bash -n PKGBUILD
           namcap PKGBUILD
-          makepkg --printsrcinfo > .SRCINFO.expected
+          sudo -u builder makepkg --printsrcinfo > .SRCINFO.expected
           diff -u .SRCINFO .SRCINFO.expected
