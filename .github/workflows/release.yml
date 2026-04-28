@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-arch-package:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install build deps
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed rust git github-cli sudo
+
+      - uses: actions/checkout@v4
+
+      - name: Mark workspace safe for git (different uid in container)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Validate tag matches Cargo.toml and PKGBUILD
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version=$(grep '^version' Cargo.toml | head -1 | sed 's/version *= *"\(.*\)"/\1/')
+          pkgbuild_version=$(grep '^pkgver=' arch/PKGBUILD | cut -d= -f2)
+          echo "tag=$tag_version cargo=$cargo_version pkgbuild=$pkgbuild_version"
+          if [ "$tag_version" != "$cargo_version" ] || [ "$tag_version" != "$pkgbuild_version" ]; then
+            echo "Version mismatch. Tag, Cargo.toml, and PKGBUILD must all match $tag_version." >&2
+            exit 1
+          fi
+
+      - name: Set up unprivileged build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Build package
+        working-directory: arch
+        run: sudo -u builder makepkg -f
+
+      - name: Publish GitHub Release with package assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: arch
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            razer-tray-*-x86_64.pkg.tar.zst
