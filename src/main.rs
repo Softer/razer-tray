@@ -39,7 +39,10 @@ struct BatteryState {
     level: Option<u8>,
     charging: bool,
     low_notified: bool,
+    device_name: Option<String>,
 }
+
+const DEFAULT_DEVICE_NAME: &str = "Razer Mouse";
 
 struct RazerTray {
     state: Arc<Mutex<BatteryState>>,
@@ -85,10 +88,11 @@ impl Tray for RazerTray {
 
     fn tool_tip(&self) -> ksni::ToolTip {
         let state = self.state.lock().unwrap();
+        let name = state.device_name.as_deref().unwrap_or(DEFAULT_DEVICE_NAME);
         let description = match (state.level, state.charging) {
-            (None, _) => "Mouse not found".into(),
-            (Some(l), true) => format!("Razer Mouse: {}% (charging)", l),
-            (Some(l), false) => format!("Razer Mouse: {}%", l),
+            (None, _) => format!("{}: not found", name),
+            (Some(l), true) => format!("{}: {}% (charging)", name, l),
+            (Some(l), false) => format!("{}: {}%", name, l),
         };
         ksni::ToolTip {
             title: description,
@@ -98,10 +102,11 @@ impl Tray for RazerTray {
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let state = self.state.lock().unwrap();
+        let name = state.device_name.as_deref().unwrap_or(DEFAULT_DEVICE_NAME);
         let label = match (state.level, state.charging) {
-            (None, _) => "Mouse not found".into(),
-            (Some(l), true) => format!("Battery: {}% (charging)", l),
-            (Some(l), false) => format!("Battery: {}%", l),
+            (None, _) => format!("{}: not found", name),
+            (Some(l), true) => format!("{}: {}% (charging)", name, l),
+            (Some(l), false) => format!("{}: {}%", name, l),
         };
         vec![
             MenuItem::Standard(ksni::menu::StandardItem {
@@ -252,10 +257,14 @@ fn read_battery() -> (Option<u8>, bool) {
     (level, charging)
 }
 
-fn notify_low_battery(level: u8) {
+fn read_device_name() -> Option<String> {
+    read_sysfs("device_type").filter(|s| !s.is_empty())
+}
+
+fn notify_low_battery(level: u8, device_name: &str) {
     log_info!("notification: low battery {}%", level);
     if let Err(e) = Notification::new()
-        .summary("Razer Mouse — Low Battery")
+        .summary(&format!("{} — Low Battery", device_name))
         .body(&format!("Battery level: {}%", level))
         .icon("battery-caution")
         .urgency(Urgency::Critical)
@@ -306,14 +315,22 @@ fn main() {
         level: None,
         charging: false,
         low_notified: false,
+        device_name: None,
     }));
 
     let (level, charging) = read_battery();
-    log_info!("initial battery: level={:?} charging={}", level, charging);
+    let device_name = read_device_name();
+    log_info!(
+        "initial: level={:?} charging={} device={:?}",
+        level,
+        charging,
+        device_name
+    );
     {
         let mut s = state.lock().unwrap();
         s.level = level;
         s.charging = charging;
+        s.device_name = device_name;
     }
 
     let tray = RazerTray {
@@ -328,14 +345,27 @@ fn main() {
         thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
 
         let (level, charging) = read_battery();
-        log_info!("poll: level={:?} charging={}", level, charging);
+        let new_name = read_device_name();
+        log_info!(
+            "poll: level={:?} charging={} device={:?}",
+            level,
+            charging,
+            new_name
+        );
         let mut s = state.lock().unwrap();
         s.level = level;
         s.charging = charging;
+        if new_name.is_some() {
+            s.device_name = new_name;
+        }
 
         if let Some(l) = level {
             if l <= LOW_BATTERY_THRESHOLD && !charging && !s.low_notified {
-                notify_low_battery(l);
+                let name = s
+                    .device_name
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_DEVICE_NAME.to_string());
+                notify_low_battery(l, &name);
                 s.low_notified = true;
             }
             if l > LOW_BATTERY_THRESHOLD {
