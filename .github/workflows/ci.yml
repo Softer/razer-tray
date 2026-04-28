@@ -52,7 +52,7 @@ jobs:
       - name: Install lint tools
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed namcap
+          pacman -S --noconfirm --needed git namcap
 
       - uses: actions/checkout@v4
 
