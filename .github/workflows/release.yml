@@ -43,7 +43,13 @@ jobs:
 
       - name: Build package
         working-directory: arch
-        run: sudo -u builder makepkg -f
+        # --nodeps skips the runtime-dep check. openrazer-driver-dkms is
+        # a DKMS package whose post-install needs headers of the running
+        # kernel, which inside the GH Actions Arch container are headers
+        # of the Ubuntu host kernel - so the DKMS install itself fails.
+        # We only need the .pkg.tar.zst built; pacman -U on the user's
+        # machine enforces the runtime dep there.
+        run: sudo -u builder makepkg -f --nodeps
 
       - name: Publish GitHub Release with package assets
         env:
