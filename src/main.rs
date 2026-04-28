@@ -283,7 +283,7 @@ fn read_device_name() -> Option<String> {
 fn notify_low_battery(level: u8, device_name: &str) {
     log_info!("notification: low battery {}%", level);
     if let Err(e) = Notification::new()
-        .summary(&format!("{} — Low Battery", device_name))
+        .summary(&format!("{}: Low Battery", device_name))
         .body(&format!("Battery level: {}%", level))
         .icon("battery-caution")
         .urgency(Urgency::Critical)
