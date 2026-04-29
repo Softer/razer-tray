@@ -314,8 +314,10 @@ fn read_device_sysfs(driver: &str, sysfs_id: &str, filename: &str) -> Option<Str
 }
 
 fn read_battery_for(driver: &str, sysfs_id: &str) -> (Option<u8>, bool) {
-    let level =
-        read_device_sysfs(driver, sysfs_id, "charge_level").and_then(|s| s.parse::<u8>().ok());
+    // openrazer kernel driver reports raw 0-255; convert to percent
+    let level = read_device_sysfs(driver, sysfs_id, "charge_level")
+        .and_then(|s| s.parse::<u16>().ok())
+        .map(|raw| (raw * 100 / 255).min(100) as u8);
     let charging = read_device_sysfs(driver, sysfs_id, "charge_status")
         .map(|s| !s.is_empty() && s != "0")
         .unwrap_or(false);
