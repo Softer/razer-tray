@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Duration;
 
 const SYSFS_DRIVERS: &[&str] = &["razermouse", "razerkbd"];
-const POLL_INTERVAL_SECS: u64 = 1;
+const POLL_INTERVAL_SECS: u64 = 5;
 const LOW_BATTERY_THRESHOLD: u8 = 20;
 
 const STARTUP_GRACE_RETRIES: u8 = 5;
