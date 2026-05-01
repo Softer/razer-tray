@@ -5,6 +5,7 @@ use razer_tray::{
     apply_debounce, apply_sleep_detection, extract_persistent_id, format_device_label,
     parse_persisted_selection, DEFAULT_DEVICE_NAME,
 };
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -329,13 +330,37 @@ fn read_device_name_for(driver: &str, sysfs_id: &str) -> Option<String> {
 }
 
 fn discover() -> Vec<DiscoveredDevice> {
+    static PERM_WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
     let mut out = Vec::new();
     for &drv in SYSFS_DRIVERS {
         let pattern = format!("/sys/bus/hid/drivers/{}/*", drv);
         let Ok(paths) = glob(&pattern) else { continue };
         for path in paths.flatten() {
-            if !path.join("charge_level").exists() {
+            let charge_level_path = path.join("charge_level");
+            if !charge_level_path.exists() {
                 continue;
+            }
+            if !path.join("device_type").exists() {
+                continue;
+            }
+            match fs::read_to_string(&charge_level_path) {
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                    let warned = PERM_WARNED.get_or_init(|| Mutex::new(HashSet::new()));
+                    let mut set = warned.lock().unwrap();
+                    if set.insert(name.to_string()) {
+                        eprintln!(
+                            "[razer-tray] permission denied reading {}/charge_level — \
+                             add your user to the 'plugdev' group (or whichever group \
+                             owns the openrazer sysfs files) and re-login",
+                            name
+                        );
+                    }
+                    continue;
+                }
+                Err(_) => continue,
+                Ok(_) => {}
             }
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
