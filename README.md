@@ -14,7 +14,7 @@ Reads directly from kernel sysfs (the `openrazer-driver-dkms` module) without de
 - Selection persisted across restarts (`$XDG_CONFIG_HOME/razer-tray/selected_device`)
 - Standard freedesktop fallback icons: `battery-full`, `battery-good`, `battery-medium`, `battery-low`, `battery-caution`, `battery-full-charging`, `battery-missing`
 - `Critical` notification at <= 20% **per device**, independent of the selected one (once per discharge cycle)
-- 1 Hz polling (the tray only refreshes on a real state change)
+- 5-second polling (the tray only refreshes on a real state change)
 
 ## Requirements
 
@@ -29,6 +29,13 @@ ls /sys/bus/hid/drivers/razermouse/ /sys/bus/hid/drivers/razerkbd/
 ```
 
 If both directories are empty the devices are either not connected or not supported by the openrazer driver.
+
+Your user must have read access to the openrazer sysfs files. On most distros this means being in the `plugdev` group (check with `groups`). If you see "permission denied" in the journal or "not found" in the tray despite the device being present:
+
+```bash
+sudo usermod -aG plugdev "$USER"
+# then log out and back in
+```
 
 ## Compatibility
 
@@ -116,11 +123,11 @@ Low-battery notifications (<= 20%) fire **per device** regardless of which one d
 
 ### `--quit-on-disconnect` + udev
 
-By default razer-tray polls sysfs once a second and shows a "not found" icon while no Razer device is connected. With `--quit-on-disconnect` the service **exits** when every Razer device disappears from sysfs, and the udev rule (shipped with the Arch package) **relaunches it** when any device returns. Benefits:
+By default razer-tray polls sysfs every 5 seconds and shows a "not found" icon while no Razer device is connected. With `--quit-on-disconnect` the service **exits** when every Razer device disappears from sysfs, and the udev rule (shipped with the Arch package) **relaunches it** when any device returns. Benefits:
 
 - No background process when no device is around
 - No zombie icon in the tray
-- Reconnection is instant via udev, not up to one second of polling
+- Reconnection is instant via udev, not up to 5 seconds of polling
 
 **Enable:**
 
@@ -168,7 +175,7 @@ Parameters live as constants at the top of `src/main.rs`:
 
 | Constant | Value | Purpose |
 |---|---|---|
-| `POLL_INTERVAL_SECS` | 1 | sysfs poll interval in seconds |
+| `POLL_INTERVAL_SECS` | 5 | sysfs poll interval in seconds |
 | `LOW_BATTERY_THRESHOLD` | 20 | low-battery notification threshold, % |
 | `SLEEP_DETECTION_MIN_DROP` | 5 | minimum delta (%) used to recognise "device asleep, sysfs returned 0" |
 | `SYSFS_DRIVERS` | `["razermouse", "razerkbd"]` | which openrazer drivers to scan |
