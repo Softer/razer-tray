@@ -537,7 +537,13 @@ fn main() {
         .into_iter()
         .map(|d| {
             let driver = d.driver;
-            let (level, charging) = read_battery_for(driver, &d.sysfs_id);
+            let (raw_level, charging) = read_battery_for(driver, &d.sysfs_id);
+            // Driver may report 0 before it finishes initializing; treat as unknown.
+            let level = if raw_level == Some(0) && !charging {
+                None
+            } else {
+                raw_level
+            };
             let name = read_device_name_for(driver, &d.sysfs_id);
             log_info!(
                 "  {} ({}): level={:?} charging={} name={:?}",
