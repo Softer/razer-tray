@@ -6,7 +6,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/razer-tray
+ExecStart=/usr/bin/razer-tray --quit-on-disconnect
 Restart=on-failure
 RestartSec=5
 

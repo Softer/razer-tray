@@ -121,33 +121,11 @@ Low-battery notifications (<= 20%) fire **per device** regardless of which one d
 
 **Edge case:** two devices of the exact same model (same `vendor:product`) - recall picks the first one in sysfs glob order. Within a session you can still switch between them via the menu.
 
-### `--quit-on-disconnect` + udev
+### Lifecycle: systemd + udev
 
-By default razer-tray polls sysfs every 5 seconds and shows a "not found" icon while no Razer device is connected. With `--quit-on-disconnect` the service **exits** when every Razer device disappears from sysfs, and the udev rule (shipped with the Arch package) **relaunches it** when any device returns. Benefits:
+The systemd service runs with `--quit-on-disconnect`. When every Razer device disappears from sysfs, the service **exits** cleanly - no zombie icon in the tray, no background process. The udev rule (`/usr/lib/udev/rules.d/99-razer-tray.rules`) **relaunches it** instantly when any device returns, so reconnection does not depend on polling.
 
-- No background process when no device is around
-- No zombie icon in the tray
-- Reconnection is instant via udev, not up to 5 seconds of polling
-
-**Enable:**
-
-1. Add the flag to the systemd unit:
-   ```bash
-   systemctl --user edit razer-tray.service
-   ```
-   Override content:
-   ```
-   [Service]
-   ExecStart=
-   ExecStart=/usr/bin/razer-tray --quit-on-disconnect
-   ```
-2. Reload and restart:
-   ```bash
-   systemctl --user daemon-reload
-   systemctl --user restart razer-tray.service
-   ```
-
-The udev rule (`/usr/lib/udev/rules.d/99-razer-tray.rules`) ships with the package and activates system-wide. When any Razer device shows up (driver matching `razer*` - mouse, keyboard, etc.) it triggers `/usr/lib/razer-tray/udev-trigger`, which starts the service for every active user session. Devices without a `charge_level` (mousepads, for instance) are silently ignored by razer-tray itself.
+When running manually (`razer-tray` without the flag), the process stays alive and shows a "not found" icon while no device is connected.
 
 ### Running via systemd (recommended)
 
