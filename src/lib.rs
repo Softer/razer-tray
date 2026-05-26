@@ -17,7 +17,7 @@ pub fn apply_sleep_detection(
     charging: bool,
 ) -> Option<u8> {
     match (raw_level, prev_level) {
-        (Some(0), Some(p)) if !charging && p >= SLEEP_DETECTION_MIN_DROP => Some(p),
+        (None, Some(p)) if !charging && p >= SLEEP_DETECTION_MIN_DROP => Some(p),
         _ => raw_level,
     }
 }

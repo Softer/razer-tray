@@ -1,29 +1,29 @@
 use razer_tray::{apply_debounce, apply_sleep_detection, format_device_label};
 
 #[test]
-fn sleep_detection_keeps_prev_when_zero_drop_below_threshold() {
+fn sleep_detection_keeps_prev_on_none() {
     assert_eq!(
-        apply_sleep_detection(Some(0), Some(50), false),
+        apply_sleep_detection(None, Some(50), false),
         Some(50),
-        "raw=0% from prev=50% while not charging means sleep, not real drop"
+        "None (raw 0 = USB failure) from prev=50% means sleep, keep prev"
     );
 }
 
 #[test]
-fn sleep_detection_passes_real_zero_when_prev_was_low() {
+fn sleep_detection_drops_when_prev_was_low() {
     assert_eq!(
-        apply_sleep_detection(Some(0), Some(3), false),
-        Some(0),
-        "drop from below MIN_DROP=5 is treated as a real reading, not sleep"
+        apply_sleep_detection(None, Some(3), false),
+        None,
+        "prev below MIN_DROP=5 means battery was already near-dead, accept None"
     );
 }
 
 #[test]
-fn sleep_detection_does_not_trigger_when_charging() {
+fn sleep_detection_drops_when_charging() {
     assert_eq!(
-        apply_sleep_detection(Some(0), Some(50), true),
-        Some(0),
-        "charging cable in -> 0% should pass through, never assume sleep"
+        apply_sleep_detection(None, Some(50), true),
+        None,
+        "charging + None is not sleep, pass through"
     );
 }
 

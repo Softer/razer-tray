@@ -319,6 +319,7 @@ fn read_battery_for(driver: &str, sysfs_id: &str) -> (Option<u8>, bool) {
     // openrazer kernel driver reports raw 0-255; convert to percent
     let level = read_device_sysfs(driver, sysfs_id, "charge_level")
         .and_then(|s| s.parse::<u16>().ok())
+        .filter(|&raw| raw > 0)
         .map(|raw| (raw * 100 / 255).min(100) as u8);
     let charging = read_device_sysfs(driver, sysfs_id, "charge_status")
         .map(|s| !s.is_empty() && s != "0")
@@ -537,13 +538,7 @@ fn main() {
         .into_iter()
         .map(|d| {
             let driver = d.driver;
-            let (raw_level, charging) = read_battery_for(driver, &d.sysfs_id);
-            // Driver may report 0 before it finishes initializing; treat as unknown.
-            let level = if raw_level == Some(0) && !charging {
-                None
-            } else {
-                raw_level
-            };
+            let (level, charging) = read_battery_for(driver, &d.sysfs_id);
             let name = read_device_name_for(driver, &d.sysfs_id);
             log_info!(
                 "  {} ({}): level={:?} charging={} name={:?}",
@@ -715,7 +710,7 @@ fn main() {
             }
 
             let post_sleep = apply_sleep_detection(raw_level, prev_level, charging);
-            if raw_level == Some(0) && post_sleep != Some(0) {
+            if raw_level.is_none() && post_sleep.is_some() {
                 log_info!("{}: sleep detected, keeping {:?}", d.sysfs_id, post_sleep);
             }
 
