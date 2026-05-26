@@ -18,7 +18,7 @@ Reads directly from kernel sysfs (the `openrazer-driver-dkms` module) without de
 
 ## Requirements
 
-- Linux with systemd (for the systemd user service; the .desktop autostart works without systemd too)
+- Linux with systemd (for the systemd user service)
 - The `razermouse` and/or `razerkbd` kernel modules from `openrazer-driver-dkms`
 - A D-Bus session (for the tray and notifications)
 - An icon theme with freedesktop battery-* icons (Adwaita, Breeze, Papirus, most modern themes) - only used as a fallback when the bundled PNG icons cannot be located
@@ -65,7 +65,7 @@ paru -S razer-tray       # or: yay -S razer-tray
 paru -S razer-tray-bin   # or: yay -S razer-tray-bin
 ```
 
-Both install the systemd user service, the XDG autostart entry, and the udev rule. The two packages conflict with each other on purpose - install only one.
+Both install the systemd user service, the udev rule, and a `.desktop` file (in `/usr/share/applications/` for manual use). The two packages conflict with each other on purpose - install only one.
 
 ### From a published release (manual)
 
@@ -93,7 +93,7 @@ makepkg -si
 
 `makepkg -si` builds the package from the in-tree PKGBUILD, installs it, and on top of that:
 - Enables the `razer-tray.service` systemd user unit globally (for all current and future users)
-- Drops an XDG autostart entry under `/etc/xdg/autostart/` (fallback for non-systemd sessions)
+- Installs a `.desktop` file in `/usr/share/applications/` (for manual launch or non-systemd setups)
 - Tries to start the service for every logged-in user immediately after install
 
 The icon shows up in the tray automatically on the next graphical login.
