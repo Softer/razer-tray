@@ -820,6 +820,7 @@ version = "0.5.2"
 dependencies = [
  "glob",
  "ksni",
+ "libc",
  "notify-rust",
  "png",
 ]

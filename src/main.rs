@@ -7,6 +7,7 @@ use razer_tray::{
 };
 use std::collections::HashSet;
 use std::fs;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -481,10 +482,31 @@ fn parse_args() -> Result<(), i32> {
     Ok(())
 }
 
+fn ensure_single_instance() {
+    static LOCK: OnceLock<fs::File> = OnceLock::new();
+
+    let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return;
+    };
+    let lock_path = PathBuf::from(dir).join("razer-tray.lock");
+    let Ok(file) = fs::File::create(&lock_path) else {
+        return;
+    };
+    // SAFETY: flock on a valid owned fd is safe; LOCK_NB makes it non-blocking.
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        eprintln!("[razer-tray] another instance is already running, exiting");
+        std::process::exit(0);
+    }
+    let _ = LOCK.set(file);
+}
+
 fn main() {
     if let Err(code) = parse_args() {
         std::process::exit(code);
     }
+
+    ensure_single_instance();
 
     log_info!(
         "starting {} {}",
