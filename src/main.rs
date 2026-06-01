@@ -321,9 +321,10 @@ fn read_battery_for(driver: &str, sysfs_id: &str) -> (Option<u8>, bool) {
         .and_then(|s| s.parse::<u16>().ok())
         .filter(|&raw| raw > 0)
         .map(|raw| (raw * 100 / 255).min(100) as u8);
-    let charging = read_device_sysfs(driver, sysfs_id, "charge_status")
-        .map(|s| !s.is_empty() && s != "0")
-        .unwrap_or(false);
+    let charging = level.is_some()
+        && read_device_sysfs(driver, sysfs_id, "charge_status")
+            .map(|s| !s.is_empty() && s != "0")
+            .unwrap_or(false);
     (level, charging)
 }
 
